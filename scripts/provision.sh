@@ -1,5 +1,4 @@
 #!/bin/bash
-
 echo "###############################################################################"
 echo "#  MAKE SURE YOU ARE LOGGED IN:                                               #"
 echo "#  $ oc login http://console.your.openshift.com                               #"
@@ -25,6 +24,7 @@ function usage() {
     echo "   --project-suffix [suffix] Suffix to be added to demo project names e.g. ci-SUFFIX. If empty, user will be used as suffix"
     echo "   --ephemeral               Deploy demo without persistent storage"
     echo "   --use-sonar               Use SonarQube for static code analysis instead of CheckStyle,FindBug,etc"
+    echo "   --use-eclipse-che         Use Eclipse Che to modify, test and push code directly from OpenShift"
     echo "   --oc-options              oc client options to pass to all oc commands e.g. --server https://my.openshift.com"
     echo
 }
@@ -86,6 +86,9 @@ while :; do
         --use-sonar)
             ARG_WITH_SONAR=true
             ;;
+        --use-eclipse-che)
+           CHE=true
+            ;;
         -h|--help)
             usage
             exit 0
@@ -117,6 +120,7 @@ GITHUB_ACCOUNT=${GITHUB_ACCOUNT:-OpenShiftDemos}
 GITHUB_REF=${GITHUB_REF:-ocp-3.7}
 
 function deploy() {
+  
   oc $ARG_OC_OPS new-project dev-$PRJ_SUFFIX   --display-name="Tasks - Dev"
   oc $ARG_OC_OPS new-project stage-$PRJ_SUFFIX --display-name="Tasks - Stage"
   oc $ARG_OC_OPS new-project cicd-$PRJ_SUFFIX  --display-name="CI/CD"
@@ -150,7 +154,27 @@ function deploy() {
 
   local template=https://raw.githubusercontent.com/$GITHUB_ACCOUNT/openshift-cd-demo/$GITHUB_REF/cicd-template.yaml
   echo "Using template $template"
-  oc $ARG_OC_OPS new-app -f $template --param DEV_PROJECT=dev-$PRJ_SUFFIX --param STAGE_PROJECT=stage-$PRJ_SUFFIX --param=WITH_SONAR=$ARG_WITH_SONAR --param=EPHEMERAL=$ARG_EPHEMERAL -n cicd-$PRJ_SUFFIX 
+  oc $ARG_OC_OPS new-app -f $template --param DEV_PROJECT=dev-$PRJ_SUFFIX --param STAGE_PROJECT=stage-$PRJ_SUFFIX --param=WITH_SONAR=$ARG_WITH_SONAR --param=EPHEMERAL=$ARG_EPHEMERAL -n cicd-$PRJ_SUFFIX
+
+  if [[ $CHE ]]; then
+      sleep 2
+
+      cd $OLDPWD
+      cd ..
+      git submodule update --init
+      export CHE_MULTIUSER=true
+      export OPENSHIFT_ENDPOINT=$(oc version | grep Server | cut -d ' ' -f 2)
+      export OPENSHIFT_TOKEN=$(oc $ARG_OC_OPS whoami -t)
+      export OPENSHIFT_ROUTING_SUFFIX=$(oc get route docker-registry  -n default | grep docker-registry | awk '{print $2;}' | perl -pe 's/(.*?)\.//')
+      export OPENSHIFT_FLAVOR=ocp
+      export IMAGE_PULL_POLICY=Always
+      export ENABLE_SSL=false
+      
+      cd che/dockerfiles/init/modules/openshift/files/scripts/
+      ./deploy_che.sh
+      cd -
+  fi
+
 }
 
 function make_idle() {
